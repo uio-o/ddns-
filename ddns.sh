@@ -1,6 +1,8 @@
 #!/bin/bash
-# Cloudflare DDNS - 终极无尽之剑防呆版
-# 彻底移除自我修改陷阱 / 强化内核指针稳定性
+# 修复核心版 Cloudflare DDNS
+# 特性：自动修复换行符 / 防止回显逃逸报错 / 强制稳健落盘
+
+sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 red='\e[91m'
 green='\e[92m'
@@ -10,10 +12,8 @@ cyan='\e[96m'
 bold_magenta='\e[1;95m'
 bold_green='\e[1;92m'
 none='\e[0m'
+yes='\e[1;36m'
 
-# ==============================================================
-# 统一部件：高可用探测引擎
-# ==============================================================
 get_ipv4() {
     local ip=$(curl -s -4 --max-time 6 icanhazip.com || curl -s -4 --max-time 6 ifconfig.me/ip || echo "")
     echo "$ip" | grep -Eo '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | head -n 1
@@ -30,22 +30,15 @@ send_tg() {
     fi
 }
 
-# ==============================================================
-# 安装/更新执行体：自动全局接管 
-# ==============================================================
 COMMAND_NAME=$(basename "$0")
 if [[ "$COMMAND_NAME" != "ddns" && "$0" != "/usr/bin/ddns" && "$0" != "-bash" ]]; then
-    echo -e "${green}装载核心组件中...${none}"
-    # 安全复制，避免影响当前执行进程
+    echo -e "${green}装载核心组件中... ${none}"
     cp -f "$0" /usr/bin/ddns
     chmod +x /usr/bin/ddns
-    echo -e "${green}安装完成！引擎点火...${none}"
+    echo -e " ${green}安装完成！引擎点火...${none}"
     exec /usr/bin/ddns
 fi
 
-# ==============================================================
-# 核心业务执行（静默执行：用于Crontab定时任务/强制同步）
-# ==============================================================
 if [[ "$1" == "cron" || "$1" == "force" ]]; then
     if [[ ! -s "/etc/DDNS/.config" ]]; then exit 0; fi
     source "/etc/DDNS/.config" 2>/dev/null
@@ -54,11 +47,13 @@ if [[ "$1" == "cron" || "$1" == "force" ]]; then
     Public_IPv6=$(get_ipv6)
 
     # ------------- IPv4 逻辑判断 -------------
-    if [ -n "$Public_IPv4" ] && [ ${#Domains[@]} -gt 0 ] && [ "$Public_IPv4" != "$Old_Public_IPv4" ]; then
+    if [ -n "$Public_IPv4" ] && [ -n "${Domains[*]}" ] && [ "$Public_IPv4" != "$Old_Public_IPv4" ]; then
         for Domain in "${Domains[@]}"; do
+            Domain=$(echo "$Domain" | tr -d "'" | xargs)
+            if [ -z "$Domain" ]; then continue; fi
             Root_domain=$(echo "$Domain" | awk -F '.' '{print $(NF-1)"."$NF}')
-            Zone_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Root_domain&status=active" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | sed -E "s/.*\"id\":\"([a-zA-Z0-9]*)\".*/\1/")
-            Record_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records?type=A&name=$Domain" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | sed -E "s/.*\"id\":\"([a-zA-Z0-9]*)\".*/\1/")
+            Zone_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Root_domain&status=active" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+            Record_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records?type=A&name=$Domain" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
             if [[ -n "$Record_ID" ]]; then
                 curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records/$Record_ID" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" --data '{"type":"A","name":"'"$Domain"'","content":"'"$Public_IPv4"'","ttl":1,"proxied":false}' > /dev/null
                 send_tg "Cloudflare DDNS (IPv4)%0A域名: $Domain%0A新IP: $Public_IPv4"
@@ -73,11 +68,13 @@ if [[ "$1" == "cron" || "$1" == "force" ]]; then
     fi
 
     # ------------- IPv6 逻辑判断 -------------
-    if [ -n "$Public_IPv6" ] && [ ${#Domains6[@]} -gt 0 ] && [ "$Public_IPv6" != "$Old_Public_IPv6" ]; then
+    if [ -n "$Public_IPv6" ] && [ -n "${Domains6[*]}" ] && [ "$Public_IPv6" != "$Old_Public_IPv6" ]; then
         for Domain in "${Domains6[@]}"; do
+            Domain=$(echo "$Domain" | tr -d "'" | xargs)
+            if [ -z "$Domain" ]; then continue; fi
             Root_domain=$(echo "$Domain" | awk -F '.' '{print $(NF-1)"."$NF}')
-            Zone_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Root_domain&status=active" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | sed -E "s/.*\"id\":\"([a-zA-Z0-9]*)\".*/\1/")
-            Record_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records?type=AAAA&name=$Domain" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | sed -E "s/.*\"id\":\"([a-zA-Z0-9]*)\".*/\1/")
+            Zone_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$Root_domain&status=active" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
+            Record_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records?type=AAAA&name=$Domain" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
             if [[ -n "$Record_ID" ]]; then
                 curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$Zone_ID/dns_records/$Record_ID" -H "X-Auth-Email: $Email" -H "X-Auth-Key: $Key" -H "Content-Type: application/json" --data '{"type":"AAAA","name":"'"$Domain"'","content":"'"$Public_IPv6"'","ttl":1,"proxied":false}' > /dev/null
                 send_tg "Cloudflare DDNS (IPv6)%0A域名: $Domain%0A新IP: $Public_IPv6"
@@ -93,19 +90,14 @@ if [[ "$1" == "cron" || "$1" == "force" ]]; then
     exit 0
 fi
 
-# ==============================================================
-# UI 界面：保姆级首次引导配置
-# ==============================================================
 configure() {
     clear
-    echo -e "${yellow}===============================${none}"
-    echo -e "${yellow}   DDNS 防呆高可用配置向导   ${none}"
-    echo -e "${yellow}===============================${none}"
-    
+    echo -e " ${yellow}===============================${none}"
+    echo -e " ${yellow}   DDNS 防呆高可用配置向导   ${none}"
+    echo -e " ${yellow}===============================${none}"
     mkdir -p /etc/DDNS
     rm -f "/etc/DDNS/.config"
 
-    # 1. 邮箱确认环
     while true; do
         echo -ne "请输入 Cloudflare 邮箱: "
         read Email
@@ -116,7 +108,6 @@ configure() {
     done
     echo ""
 
-    # 2. Key 确认环
     while true; do
         echo -ne "请输入 Cloudflare API Key (Global): "
         read Key
@@ -127,7 +118,6 @@ configure() {
     done
     echo ""
 
-    # 3. TG 确认环
     while true; do
         echo -ne "请输入 TG Bot Token (直接回车跳过): "
         read TG_Token
@@ -142,13 +132,12 @@ configure() {
         read confirm
         [[ "$confirm" == "y" || "$confirm" == "Y" ]] && break
     done
-    
+
     echo -e "\n${green}[+] 基础服务连通就绪。开始全局网卡出口探测...${none}"
-    
+
     v4_domains=""
     v6_domains=""
 
-    # IPv4 探测与确认
     sys_ipv4=$(get_ipv4)
     if [[ -n "$sys_ipv4" ]]; then
         echo -e "\n------------------------------------------------"
@@ -176,7 +165,6 @@ configure() {
         echo -e "\n${red}[!] 系统未检测到全局 IPv4，已跳过 IPv4 选项。${none}"
     fi
 
-    # IPv6 探测与确认
     sys_ipv6=$(get_ipv6)
     if [[ -n "$sys_ipv6" ]]; then
         echo -e "\n------------------------------------------------"
@@ -204,7 +192,6 @@ configure() {
         echo -e "\n${red}[!] 系统未检测到全局 IPv6，已跳过 IPv6 选项。${none}"
     fi
 
-    # 保存配置
     {
         echo "Domains=($v4_domains)"
         echo "Domains6=($v6_domains)"
@@ -218,11 +205,11 @@ configure() {
     chmod 600 "/etc/DDNS/.config"
 
     echo -e "\n${green}[+] 配置全盘锁定！落盘无异常，系统核心已被唤醒...${none}"
-    
+
     if ! crontab -l 2>/dev/null | grep -q "ddns cron"; then
         (crontab -l 2>/dev/null; echo "* * * * * /usr/bin/ddns cron >> /var/log/ddns.log 2>&1") | crontab -
     fi
-    
+
     echo -e "${cyan}正在执行首次通信同步...${none}"
     /usr/bin/ddns force
     echo ""
@@ -232,34 +219,37 @@ configure() {
 }
 
 view_config() {
-   clear
-   source "/etc/DDNS/.config" 2>/dev/null
-   echo -e "${yellow}=== 当前系统工作参数 ===${none}"
-   echo -e "绑定的 CF 邮箱: ${green}${Email:-未配置}${none}"
-   echo -e "绑定的 CF Key: ${magenta}****************${none}"
-   
-   if [[ ${#Domains[@]} -gt 0 ]]; then
-       echo -e "设定的 IPv4 域名: ${cyan}${Domains[*]}${none}"
-   else
-       echo -e "设定的 IPv4 域名: ${cyan}未设置${none}"
-   fi
-   
-   if [[ ${#Domains6[@]} -gt 0 ]]; then
-       echo -e "设定的 IPv6 域名: ${magenta}${Domains6[*]}${none}"
-   else
-       echo -e "设定的 IPv6 域名: ${magenta}未设置${none}"
-   fi
-   
-   echo -e "-------------------------"
-   echo -e "当前已云端同步在案的 IPv4: ${yellow}${Old_Public_IPv4:-无}${none}"
-   echo -e "当前已云端同步在案的 IPv6: ${yellow}${Old_Public_IPv6:-无}${none}"
-   echo -e ""
-   echo -ne "按回车返回主菜单..."
-   read -r dump
+    clear
+    source "/etc/DDNS/.config" 2>/dev/null
+    echo -e " ${yellow}=== 当前系统工作参数 ===${none}"
+    echo -e "绑定的 CF 邮箱: ${green}${Email:-未配置} ${none}"
+    echo -e "绑定的 CF Key: ${magenta}****************${none}"
+    
+    if grep -q "Domains=([^)]*[^[:space:]][^)]*)" "/etc/DDNS/.config"; then
+        echo -e "设定的 IPv4 域名: ${cyan}${Domains[*]}${none}"
+    else
+        echo -e "设定的 IPv4 域名: ${cyan}未设置${none}"
+    fi
+
+    if grep -q "Domains6=([^)]*[^[:space:]][^)]*)" "/etc/DDNS/.config"; then
+        echo -e "设定的 IPv6 域名: ${magenta}${Domains6[*]}${none}"
+    else
+        echo -e "设定的 IPv6 域名: ${magenta}未设置${none}"
+    fi
+
+    echo -e "-------------------------"
+    echo -e "当前已云端同步在案的 IPv4: ${yellow}${Old_Public_IPv4:-无} ${none}"
+    echo -e "当前已云端同步在案的 IPv6: ${yellow}${Old_Public_IPv6:-无}${none}"
+    echo -e ""
+    echo -ne "按回车返回主菜单..."
+    read -r dump
 }
 
 force_run() {
-    echo -e "${cyan}正在前台强制通信 API...${none}"
+    echo -e " ${cyan}正在前台强制通信 API...${none}"
+    # 强制清理缓存，逼迫重发
+    sed -i 's/^Old_Public_IPv6=.*/Old_Public_IPv6=""/g' /etc/DDNS/.config
+    sed -i 's/^Old_Public_IPv4=.*/Old_Public_IPv4=""/g' /etc/DDNS/.config
     /usr/bin/ddns force
     echo ""
     echo -ne "按回车返回菜单..."
@@ -271,7 +261,7 @@ uninstall_ddns() {
     crontab -l 2>/dev/null | grep -v "ddns cron" | crontab -
     rm -rf /etc/DDNS
     rm -f /usr/bin/ddns
-    echo -e "${red}定时任务与底层文件已全量擦除。${none}"
+    echo -e " ${red}定时任务与底层文件已全量擦除。${none}"
     exit 0
 }
 
@@ -281,7 +271,6 @@ menu() {
     ipv6=$(get_ipv6)
     [[ -z "$ipv4" ]] && ipv4="未检测到"
     [[ -z "$ipv6" ]] && ipv6="未检测到"
-    
     echo -e "${cyan} =================================================${none}"
     echo -e "${cyan}   Cloudflare 智能动态解析守护台 (终极防呆版)${none}"
     echo -e "${cyan} =================================================${none}"
@@ -289,7 +278,7 @@ menu() {
     echo -e "   [本机 当前出口 IPv6] : ${magenta}$ipv6${none}"
     echo -e " -------------------------------------------------"
     echo -e "  ${yes}1.${none}  重建向导 (修改邮箱/API/域名配置) "
-    echo -e "  ${yes}2.${none}  立即触发前台同步"
+    echo -e "  ${yes}2.${none}  立即触发强制同步验证"
     echo -e "  ${yes}3.${none}  查看当前系统运行库的参数"
     echo -e "  ${yes}0.${none}  完全卸载防呆器并退出"
     echo -e "  ${yes}99.${none} 最小化至后台并退出菜单\n"
@@ -305,7 +294,6 @@ menu() {
     esac
 }
 
-# ================= 软启判断器 ================= #
 if [[ -s "/etc/DDNS/.config" ]]; then
     source "/etc/DDNS/.config" 2>/dev/null
     if [[ -n "$Email" ]]; then
@@ -313,5 +301,4 @@ if [[ -s "/etc/DDNS/.config" ]]; then
         exit 0
     fi
 fi
-
 configure

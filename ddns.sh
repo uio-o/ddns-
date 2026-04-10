@@ -1,9 +1,6 @@
 #!/bin/bash
-# 修复核心版 Cloudflare DDNS 
-# 特性：自动修复换行符 / 防止回显逃逸报错 / 强制稳健落盘
-
-# 自我防呆修复：消除从浏览器或 Windows 复制带来的 CRLF(\r) 换行符毒害
-sed -i 's/\r$//' "$0" 2>/dev/null || true
+# Cloudflare DDNS - 终极无尽之剑防呆版
+# 彻底移除自我修改陷阱 / 强化内核指针稳定性
 
 red='\e[91m'
 green='\e[92m'
@@ -39,6 +36,7 @@ send_tg() {
 COMMAND_NAME=$(basename "$0")
 if [[ "$COMMAND_NAME" != "ddns" && "$0" != "/usr/bin/ddns" && "$0" != "-bash" ]]; then
     echo -e "${green}装载核心组件中...${none}"
+    # 安全复制，避免影响当前执行进程
     cp -f "$0" /usr/bin/ddns
     chmod +x /usr/bin/ddns
     echo -e "${green}安装完成！引擎点火...${none}"
@@ -206,7 +204,7 @@ configure() {
         echo -e "\n${red}[!] 系统未检测到全局 IPv6，已跳过 IPv6 选项。${none}"
     fi
 
-    # 毫无副作用的超清爽保存代码
+    # 保存配置
     {
         echo "Domains=($v4_domains)"
         echo "Domains6=($v6_domains)"
@@ -307,7 +305,7 @@ menu() {
     esac
 }
 
-# ================= 软启判断器：绝对安全查体 ================= #
+# ================= 软启判断器 ================= #
 if [[ -s "/etc/DDNS/.config" ]]; then
     source "/etc/DDNS/.config" 2>/dev/null
     if [[ -n "$Email" ]]; then

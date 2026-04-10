@@ -1,6 +1,6 @@
 #!/bin/bash
 # 修复核心版 Cloudflare DDNS 
-# 特性：防呆极客交互 / 鲜明色彩 / IP前置探测 / 状态记忆判断
+# 特性：防呆极客交互 / 鲜明色彩 / IP前置探测 / 绝对状态记忆
 
 red='\e[91m'
 green='\e[92m'
@@ -13,10 +13,11 @@ none='\e[0m'
 config_file="/etc/DDNS/.config"
 
 # ==============================================================
-# 安装/更新执行体：自动全局接管
+# 安装/更新执行体：自动全局接管 (修复 ddns 别名识别错误)
 # ==============================================================
-if [[ "$0" != "/usr/bin/ddns" ]]; then
-    echo -e "${green}开始安装 DDNS 脚本至系统全局命令...${none}"
+COMMAND_NAME=$(basename "$0")
+if [[ "$COMMAND_NAME" != "ddns" && "$0" != "/usr/bin/ddns" && "$0" != "-bash" ]]; then
+    echo -e "${green}装载守护组件中...${none}"
     cp -f "$0" /usr/bin/ddns
     chmod +x /usr/bin/ddns
     echo -e "${green}安装完成！开始执行向导...${none}"
@@ -131,8 +132,8 @@ configure() {
     echo -e "\n${green}[+] 基础服务连通就绪。开始网卡出口探测...${none}"
     
     # ================= IP 域名侦测向导 ================= #
-    formatted_v4=""
-    formatted_v6=""
+    v4_domains=""
+    v6_domains=""
 
     # IPv4 探测与确认
     sys_ipv4=$(curl -s -4 --max-time 4 icanhazip.com || true)
@@ -146,7 +147,7 @@ configure() {
                 if [[ -n "$input_domains" ]]; then
                     read -p "$(echo -e "是否确认绑定IPv4域名为：${bold_magenta}${input_domains}${none}，(y/n): ")" confirm
                     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-                        formatted_v4=$(echo "$input_domains" | awk '{for(i=1;i<=NF;i++) printf "\"%s\" ", $i}' | sed 's/ $//')
+                        for d in $input_domains; do v4_domains="$v4_domains '$d'"; done
                         break
                     fi
                 fi
@@ -171,7 +172,7 @@ configure() {
                 if [[ -n "$input_domains6" ]]; then
                     read -p "$(echo -e "是否确认绑定IPv6域名为：${bold_magenta}${input_domains6}${none}，(y/n): ")" confirm
                     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-                        formatted_v6=$(echo "$input_domains6" | awk '{for(i=1;i<=NF;i++) printf "\"%s\" ", $i}' | sed 's/ $//')
+                        for d in $input_domains6; do v6_domains="$v6_domains '$d'"; done
                         break
                     fi
                 fi
@@ -186,8 +187,8 @@ configure() {
 
     # =========== 将确认好的所有变量保存 =========== #
     cat <<EOF > "$config_file"
-Domains=($formatted_v4)
-Domains6=($formatted_v6)
+Domains=($v4_domains)
+Domains6=($v6_domains)
 Email="$Email"
 Key="$Key"
 TG_Bot_Token="$TG_Token"
@@ -217,13 +218,13 @@ view_config() {
    echo -e "绑定的 CF 邮箱: ${green}${Email:-未配置}${none}"
    echo -e "绑定的 CF Key: ${magenta}****************${none}"
    
-   if [[ -n "${Domains[*]}" ]]; then
+   if [[ ${#Domains[@]} -gt 0 ]]; then
        echo -e "设定的 IPv4 域名: ${cyan}${Domains[*]}${none}"
    else
        echo -e "设定的 IPv4 域名: ${cyan}未设置${none}"
    fi
    
-   if [[ -n "${Domains6[*]}" ]]; then
+   if [[ ${#Domains6[@]} -gt 0 ]]; then
        echo -e "设定的 IPv6 域名: ${magenta}${Domains6[*]}${none}"
    else
        echo -e "设定的 IPv6 域名: ${magenta}未设置${none}"
@@ -280,9 +281,15 @@ menu() {
 }
 
 # ================= 软启判断器：进入菜单还是配置 ================= #
-# 如果文件存在，且包含完整的 Email 配置头，则认为配置跑过
-if [[ -f "$config_file" ]] && grep -q "Email=" "$config_file"; then
-    menu
-else
-    configure
+# 使用极度安全的文件加载验证机制，拒绝依赖 grep 字符串导致容错率低
+if [[ -s "$config_file" ]]; then
+    source "$config_file" 2>/dev/null
+    if [[ -n "$Email" ]]; then
+        # 只要邮箱变量存在，说明 100% 配置过，直接拉菜单
+        menu
+        exit 0
+    fi
 fi
+
+# 如果找不到配置，拉起向导
+configure

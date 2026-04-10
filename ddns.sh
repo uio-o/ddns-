@@ -1,6 +1,9 @@
 #!/bin/bash
 # 修复核心版 Cloudflare DDNS 
-# 特性：防呆极客交互 / 鲜明色彩 / IP前置探测 / 绝对状态记忆
+# 特性：自动修复换行符 / 防呆极客交互 / 前置探测统一部件 / 强制稳健落盘
+
+# 自我防呆修复：消除从浏览器或 Windows 复制带来的 CRLF(\r) 换行符毒害
+sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 red='\e[91m'
 green='\e[92m'
@@ -10,17 +13,35 @@ cyan='\e[96m'
 bold_magenta='\e[1;95m'
 bold_green='\e[1;92m'
 none='\e[0m'
-config_file="/etc/DDNS/.config"
 
 # ==============================================================
-# 安装/更新执行体：自动全局接管 (修复 ddns 别名识别错误)
+# 统一部件：高可用探测引擎 (全时段保证 6 秒容错，不漏判)
+# ==============================================================
+get_ipv4() {
+    local ip=$(curl -s -4 --max-time 6 icanhazip.com || curl -s -4 --max-time 6 ifconfig.me/ip || echo "")
+    echo "$ip" | grep -Eo '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | head -n 1
+}
+
+get_ipv6() {
+    local ip=$(curl -s -6 --max-time 6 icanhazip.com || curl -s -6 --max-time 6 ifconfig.co/ip || echo "")
+    echo "$ip" | grep -E -v '^(2a09|104\.28|fd|fe80)' | grep -E '[0-9a-fA-F:]+' | head -n 1
+}
+
+send_tg() {
+    if [[ -n "$TG_Bot_Token" && -n "$TG_Chat_ID" ]]; then
+        curl -s -X POST "https://api.telegram.org/bot$TG_Bot_Token/sendMessage" -d "chat_id=$TG_Chat_ID" -d "text=$1" > /dev/null 2>&1
+    fi
+}
+
+# ==============================================================
+# 安装/更新执行体：自动全局接管 
 # ==============================================================
 COMMAND_NAME=$(basename "$0")
 if [[ "$COMMAND_NAME" != "ddns" && "$0" != "/usr/bin/ddns" && "$0" != "-bash" ]]; then
-    echo -e "${green}装载守护组件中...${none}"
+    echo -e "${green}装载核心组件中...${none}"
     cp -f "$0" /usr/bin/ddns
     chmod +x /usr/bin/ddns
-    echo -e "${green}安装完成！开始执行向导...${none}"
+    echo -e "${green}安装完成！引擎点火...${none}"
     exec /usr/bin/ddns
 fi
 
@@ -28,25 +49,11 @@ fi
 # 核心业务执行（静默执行：用于Crontab定时任务/强制同步）
 # ==============================================================
 if [[ "$1" == "cron" || "$1" == "force" ]]; then
-    if [[ ! -f "$config_file" ]]; then exit 0; fi
-    source "$config_file" 2>/dev/null
+    if [[ ! -s "/etc/DDNS/.config" ]]; then exit 0; fi
+    source "/etc/DDNS/.config" 2>/dev/null
     
-    # 智能获取混合环境 IP
-    temp_ipv4=$(curl -s -4 --max-time 10 icanhazip.com || curl -s -4 --max-time 10 ifconfig.me/ip || true)
-    temp_ipv6=$(curl -s -6 --max-time 10 icanhazip.com | grep -E -v '^(2a09|104\.28|fd|fe80)' || curl -s -6 --max-time 10 ifconfig.co/ip | grep -E -v '^(2a09|104\.28|fd|fe80)' || true)
-
-    ipv4Regex="^([0-9]{1,3}\.){3}[0-9]{1,3}$"
-    ipv6Regex="^([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])$"
-    Public_IPv4=""; Public_IPv6=""
-
-    if [[ "$temp_ipv4" =~ $ipv4Regex ]]; then Public_IPv4="$temp_ipv4"; fi
-    if [[ "$temp_ipv6" =~ $ipv6Regex ]]; then Public_IPv6="$temp_ipv6"; fi
-
-    send_tg() {
-        if [[ -n "$TG_Bot_Token" && -n "$TG_Chat_ID" ]]; then
-            curl -s -X POST "https://api.telegram.org/bot$TG_Bot_Token/sendMessage" -d "chat_id=$TG_Chat_ID" -d "text=$1" > /dev/null 2>&1
-        fi
-    }
+    Public_IPv4=$(get_ipv4)
+    Public_IPv6=$(get_ipv6)
 
     # ------------- IPv4 逻辑判断 -------------
     if [ -n "$Public_IPv4" ] && [ ${#Domains[@]} -gt 0 ] && [ "$Public_IPv4" != "$Old_Public_IPv4" ]; then
@@ -62,7 +69,7 @@ if [[ "$1" == "cron" || "$1" == "force" ]]; then
                 echo -e "${red}[错误] 找不到 $Domain 的 A 记录。${none}"
             fi
         done
-        sed -i "s/^Old_Public_IPv4=.*/Old_Public_IPv4=\"$Public_IPv4\"/" "$config_file"
+        sed -i "s/^Old_Public_IPv4=.*/Old_Public_IPv4=\"$Public_IPv4\"/" "/etc/DDNS/.config"
     elif [[ -n "$Public_IPv4" && "$1" == "force" ]]; then
         echo -e "${yellow}[无变动] IPv4: $Public_IPv4 (无变化或未设域名)${none}"
     fi
@@ -81,7 +88,7 @@ if [[ "$1" == "cron" || "$1" == "force" ]]; then
                 echo -e "${red}[错误] 找不到 $Domain 的 AAAA 记录。${none}"
             fi
         done
-        sed -i "s/^Old_Public_IPv6=.*/Old_Public_IPv6=\"$Public_IPv6\"/" "$config_file"
+        sed -i "s/^Old_Public_IPv6=.*/Old_Public_IPv6=\"$Public_IPv6\"/" "/etc/DDNS/.config"
     elif [[ -n "$Public_IPv6" && "$1" == "force" ]]; then
         echo -e "${yellow}[无变动] IPv6: $Public_IPv6 (无变化或未设域名)${none}"
     fi
@@ -96,8 +103,11 @@ configure() {
     echo -e "${yellow}===============================${none}"
     echo -e "${yellow}   DDNS 防呆高可用配置向导   ${none}"
     echo -e "${yellow}===============================${none}"
-    mkdir -p /etc/DDNS
     
+    # 清理并创建坚固的目录形态
+    mkdir -p /etc/DDNS
+    rm -f "/etc/DDNS/.config"
+
     # 1. 邮箱确认环
     while true; do
         read -p "请输入 Cloudflare 邮箱: " Email
@@ -129,14 +139,14 @@ configure() {
         [[ "$confirm" == "y" || "$confirm" == "Y" ]] && break
     done
     
-    echo -e "\n${green}[+] 基础服务连通就绪。开始网卡出口探测...${none}"
+    echo -e "\n${green}[+] 基础服务连通就绪。开始全局网卡出口探测...${none}"
     
     # ================= IP 域名侦测向导 ================= #
     v4_domains=""
     v6_domains=""
 
     # IPv4 探测与确认
-    sys_ipv4=$(curl -s -4 --max-time 4 icanhazip.com || true)
+    sys_ipv4=$(get_ipv4)
     if [[ -n "$sys_ipv4" ]]; then
         echo -e "\n------------------------------------------------"
         echo -e "${cyan}系统解析到本机 IPv4 地址为：${bold_green}${sys_ipv4}${none}"
@@ -161,7 +171,7 @@ configure() {
     fi
 
     # IPv6 探测与确认
-    sys_ipv6=$(curl -s -6 --max-time 4 icanhazip.com | grep -E -v '^(2a09|104\.28|fd|fe80)' || true)
+    sys_ipv6=$(get_ipv6)
     if [[ -n "$sys_ipv6" ]]; then
         echo -e "\n------------------------------------------------"
         echo -e "${cyan}系统解析到本机 IPv6 地址为：${bold_magenta}${sys_ipv6}${none}"
@@ -185,21 +195,19 @@ configure() {
         echo -e "\n${red}[!] 系统未检测到全局 IPv6，已跳过 IPv6 选项。${none}"
     fi
 
-    # =========== 将确认好的所有变量保存 =========== #
-    cat <<EOF > "$config_file"
-Domains=($v4_domains)
-Domains6=($v6_domains)
-Email="$Email"
-Key="$Key"
-TG_Bot_Token="$TG_Token"
-TG_Chat_ID="$TG_Chat_ID"
-Old_Public_IPv4=""
-Old_Public_IPv6=""
-EOF
+    # ================= 强力稳健保存流 (彻底告别空文件和崩溃Bug) ================= #
+    echo "Domains=($v4_domains)" >> /etc/DDNS/.config
+    echo "Domains6=($v6_domains)" >> /etc/DDNS/.config
+    echo "Email=\"$Email\"" >> /etc/DDNS/.config
+    echo "Key=\"$Key\"" >> /etc/DDNS/.config
+    echo "TG_Bot_Token=\"$TG_Token\"" >> /etc/DDNS/.config
+    echo "TG_Chat_ID=\"$TG_Chat_ID\"" >> /etc/DDNS/.config
+    echo "Old_Public_IPv4=\"\"" >> /etc/DDNS/.config
+    echo "Old_Public_IPv6=\"\"" >> /etc/DDNS/.config
+    chmod 600 "/etc/DDNS/.config"
 
-    echo -e "\n${green}[+] 配置全盘锁定！正在拉起后台系统...${none}"
+    echo -e "\n${green}[+] 配置全盘锁定！落盘无异常，系统核心已被唤醒...${none}"
     
-    # 挂载 Crontab
     if ! crontab -l 2>/dev/null | grep -q "ddns cron"; then
         (crontab -l 2>/dev/null; echo "* * * * * /usr/bin/ddns cron >> /var/log/ddns.log 2>&1") | crontab -
     fi
@@ -207,13 +215,13 @@ EOF
     echo -e "${cyan}正在执行首次通信同步...${none}"
     /usr/bin/ddns force
     echo ""
-    read -p "设置完成！按回车进入管理控制台..."
+    read -p "设置已完美就绪！按回车进入管理控制台..."
     menu
 }
 
 view_config() {
    clear
-   source "$config_file" 2>/dev/null
+   source "/etc/DDNS/.config" 2>/dev/null
    echo -e "${yellow}=== 当前系统工作参数 ===${none}"
    echo -e "绑定的 CF 邮箱: ${green}${Email:-未配置}${none}"
    echo -e "绑定的 CF Key: ${magenta}****************${none}"
@@ -231,8 +239,8 @@ view_config() {
    fi
    
    echo -e "-------------------------"
-   echo -e "当前已云同步的 IPv4: ${yellow}${Old_Public_IPv4:-无}${none}"
-   echo -e "当前已云同步的 IPv6: ${yellow}${Old_Public_IPv6:-无}${none}"
+   echo -e "当前已云端同步在案的 IPv4: ${yellow}${Old_Public_IPv4:-无}${none}"
+   echo -e "当前已云端同步在案的 IPv6: ${yellow}${Old_Public_IPv6:-无}${none}"
    echo -e ""
    read -p "按回车返回主菜单..."
 }
@@ -255,14 +263,16 @@ uninstall_ddns() {
 
 menu() {
     clear
-    ipv4=$(curl -s -4 --max-time 3 icanhazip.com || echo "未检测到")
-    ipv6=$(curl -s -6 --max-time 3 icanhazip.com | grep -E -v '^(2a09|104\.28|fd|fe80)' || echo "未检测到")
+    ipv4=$(get_ipv4)
+    ipv6=$(get_ipv6)
+    [[ -z "$ipv4" ]] && ipv4="未检测到"
+    [[ -z "$ipv6" ]] && ipv6="未检测到"
     
     echo -e "${cyan} =================================================${none}"
-    echo -e "${cyan}   Cloudflare 智能动态解析守护台 (防呆修正版)${none}"
+    echo -e "${cyan}   Cloudflare 智能动态解析守护台 (终极防呆版)${none}"
     echo -e "${cyan} =================================================${none}"
-    echo -e "   [系统出口 IPv4] : ${green}$ipv4${none}"
-    echo -e "   [系统出口 IPv6] : ${magenta}$ipv6${none}"
+    echo -e "   [本机 当前出口 IPv4] : ${green}$ipv4${none}"
+    echo -e "   [本机 当前出口 IPv6] : ${magenta}$ipv6${none}"
     echo -e " -------------------------------------------------"
     echo -e "  ${yes}1.${none}  重建向导 (修改邮箱/API/域名配置) "
     echo -e "  ${yes}2.${none}  立即触发前台同步"
@@ -280,16 +290,15 @@ menu() {
     esac
 }
 
-# ================= 软启判断器：进入菜单还是配置 ================= #
-# 使用极度安全的文件加载验证机制，拒绝依赖 grep 字符串导致容错率低
-if [[ -s "$config_file" ]]; then
-    source "$config_file" 2>/dev/null
+# ================= 软启判断器：绝对安全无死角的查体 ================= #
+# 抛弃脆弱查询：只要文件实体且不为空，直接解析；只要能读出 Email 值，一发入魂！
+if [[ -s "/etc/DDNS/.config" ]]; then
+    source "/etc/DDNS/.config" 2>/dev/null
     if [[ -n "$Email" ]]; then
-        # 只要邮箱变量存在，说明 100% 配置过，直接拉菜单
         menu
         exit 0
     fi
 fi
 
-# 如果找不到配置，拉起向导
+# 以上阻断都不成立，进入向导
 configure

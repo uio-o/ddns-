@@ -1,6 +1,6 @@
 #!/bin/bash
 # 修复核心版 Cloudflare DDNS 
-# 特性：自动修复换行符 / 防呆极客交互 / 前置探测统一部件 / 强制稳健落盘
+# 特性：自动修复换行符 / 防止回显逃逸报错 / 强制稳健落盘
 
 # 自我防呆修复：消除从浏览器或 Windows 复制带来的 CRLF(\r) 换行符毒害
 sed -i 's/\r$//' "$0" 2>/dev/null || true
@@ -15,7 +15,7 @@ bold_green='\e[1;92m'
 none='\e[0m'
 
 # ==============================================================
-# 统一部件：高可用探测引擎 (全时段保证 6 秒容错，不漏判)
+# 统一部件：高可用探测引擎
 # ==============================================================
 get_ipv4() {
     local ip=$(curl -s -4 --max-time 6 icanhazip.com || curl -s -4 --max-time 6 ifconfig.me/ip || echo "")
@@ -104,44 +104,49 @@ configure() {
     echo -e "${yellow}   DDNS 防呆高可用配置向导   ${none}"
     echo -e "${yellow}===============================${none}"
     
-    # 清理并创建坚固的目录形态
     mkdir -p /etc/DDNS
     rm -f "/etc/DDNS/.config"
 
     # 1. 邮箱确认环
     while true; do
-        read -p "请输入 Cloudflare 邮箱: " Email
+        echo -ne "请输入 Cloudflare 邮箱: "
+        read Email
         if [[ -z "$Email" ]]; then continue; fi
-        read -p "$(echo -e "是否确认邮箱为：${bold_magenta}${Email}${none}，(y/n): ")" confirm
+        echo -ne "是否确认邮箱为：${bold_magenta}${Email}${none}，(y/n): "
+        read confirm
         [[ "$confirm" == "y" || "$confirm" == "Y" ]] && break
     done
     echo ""
 
     # 2. Key 确认环
     while true; do
-        read -p "请输入 Cloudflare API Key (Global): " Key
+        echo -ne "请输入 Cloudflare API Key (Global): "
+        read Key
         if [[ -z "$Key" ]]; then continue; fi
-        read -p "$(echo -e "是否确认 API Key 为：${bold_magenta}${Key}${none}，(y/n): ")" confirm
+        echo -ne "是否确认 API Key 为：${bold_magenta}${Key}${none}，(y/n): "
+        read confirm
         [[ "$confirm" == "y" || "$confirm" == "Y" ]] && break
     done
     echo ""
 
     # 3. TG 确认环
     while true; do
-        read -p "请输入 TG Bot Token (直接回车跳过): " TG_Token
+        echo -ne "请输入 TG Bot Token (直接回车跳过): "
+        read TG_Token
         if [[ -z "$TG_Token" ]]; then 
             echo -e "${yellow}[!] 已跳过 Telegram 通知项${none}"
             TG_Chat_ID=""
             break; 
         fi
-        read -p "请输入 TG Chat ID: " TG_Chat_ID
-        read -p "$(echo -e "是否确认输入？ Token=${bold_magenta}$TG_Token${none} , ChatID=${bold_magenta}$TG_Chat_ID${none}，(y/n): ")" confirm
+        echo -ne "请输入 TG Chat ID: "
+        read TG_Chat_ID
+        echo -ne "是否确认输入？ Token=${bold_magenta}$TG_Token${none} , ChatID=${bold_magenta}$TG_Chat_ID${none}，(y/n): "
+        read confirm
         [[ "$confirm" == "y" || "$confirm" == "Y" ]] && break
     done
     
     echo -e "\n${green}[+] 基础服务连通就绪。开始全局网卡出口探测...${none}"
     
-    # ================= IP 域名侦测向导 ================= #
     v4_domains=""
     v6_domains=""
 
@@ -151,11 +156,14 @@ configure() {
         echo -e "\n------------------------------------------------"
         echo -e "${cyan}系统解析到本机 IPv4 地址为：${bold_green}${sys_ipv4}${none}"
         while true; do
-            read -p "$(echo -e "是否需要解析 IPv4 域名？(y/n, 默认n): ")" opt_v4
+            echo -ne "是否需要解析 IPv4 域名？(y/n, 默认n): "
+            read opt_v4
             if [[ "$opt_v4" == "y" || "$opt_v4" == "Y" ]]; then
-                read -p "请输入要解析的 IPv4 域名 (多个用空格隔开): " input_domains
+                echo -ne "请输入要解析的 IPv4 域名 (多个用空格隔开): "
+                read input_domains
                 if [[ -n "$input_domains" ]]; then
-                    read -p "$(echo -e "是否确认绑定IPv4域名为：${bold_magenta}${input_domains}${none}，(y/n): ")" confirm
+                    echo -ne "是否确认绑定IPv4域名为：${bold_magenta}${input_domains}${none}，(y/n): "
+                    read confirm
                     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
                         for d in $input_domains; do v4_domains="$v4_domains '$d'"; done
                         break
@@ -176,11 +184,14 @@ configure() {
         echo -e "\n------------------------------------------------"
         echo -e "${cyan}系统解析到本机 IPv6 地址为：${bold_magenta}${sys_ipv6}${none}"
         while true; do
-            read -p "$(echo -e "是否需要解析 IPv6 域名？(y/n, 默认y): ")" opt_v6
+            echo -ne "是否需要解析 IPv6 域名？(y/n, 默认y): "
+            read opt_v6
             if [[ -z "$opt_v6" || "$opt_v6" == "y" || "$opt_v6" == "Y" ]]; then
-                read -p "请输入要解析的 IPv6 域名 (多个用空格隔开): " input_domains6
+                echo -ne "请输入要解析的 IPv6 域名 (多个用空格隔开): "
+                read input_domains6
                 if [[ -n "$input_domains6" ]]; then
-                    read -p "$(echo -e "是否确认绑定IPv6域名为：${bold_magenta}${input_domains6}${none}，(y/n): ")" confirm
+                    echo -ne "是否确认绑定IPv6域名为：${bold_magenta}${input_domains6}${none}，(y/n): "
+                    read confirm
                     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
                         for d in $input_domains6; do v6_domains="$v6_domains '$d'"; done
                         break
@@ -195,15 +206,17 @@ configure() {
         echo -e "\n${red}[!] 系统未检测到全局 IPv6，已跳过 IPv6 选项。${none}"
     fi
 
-    # ================= 强力稳健保存流 (彻底告别空文件和崩溃Bug) ================= #
-    echo "Domains=($v4_domains)" >> /etc/DDNS/.config
-    echo "Domains6=($v6_domains)" >> /etc/DDNS/.config
-    echo "Email=\"$Email\"" >> /etc/DDNS/.config
-    echo "Key=\"$Key\"" >> /etc/DDNS/.config
-    echo "TG_Bot_Token=\"$TG_Token\"" >> /etc/DDNS/.config
-    echo "TG_Chat_ID=\"$TG_Chat_ID\"" >> /etc/DDNS/.config
-    echo "Old_Public_IPv4=\"\"" >> /etc/DDNS/.config
-    echo "Old_Public_IPv6=\"\"" >> /etc/DDNS/.config
+    # 毫无副作用的超清爽保存代码
+    {
+        echo "Domains=($v4_domains)"
+        echo "Domains6=($v6_domains)"
+        echo "Email=\"$Email\""
+        echo "Key=\"$Key\""
+        echo "TG_Bot_Token=\"$TG_Token\""
+        echo "TG_Chat_ID=\"$TG_Chat_ID\""
+        echo "Old_Public_IPv4=\"\""
+        echo "Old_Public_IPv6=\"\""
+    } > /etc/DDNS/.config
     chmod 600 "/etc/DDNS/.config"
 
     echo -e "\n${green}[+] 配置全盘锁定！落盘无异常，系统核心已被唤醒...${none}"
@@ -215,7 +228,8 @@ configure() {
     echo -e "${cyan}正在执行首次通信同步...${none}"
     /usr/bin/ddns force
     echo ""
-    read -p "设置已完美就绪！按回车进入管理控制台..."
+    echo -ne "设置已完美就绪！按回车进入管理控制台..."
+    read -r dump
     menu
 }
 
@@ -242,14 +256,16 @@ view_config() {
    echo -e "当前已云端同步在案的 IPv4: ${yellow}${Old_Public_IPv4:-无}${none}"
    echo -e "当前已云端同步在案的 IPv6: ${yellow}${Old_Public_IPv6:-无}${none}"
    echo -e ""
-   read -p "按回车返回主菜单..."
+   echo -ne "按回车返回主菜单..."
+   read -r dump
 }
 
 force_run() {
     echo -e "${cyan}正在前台强制通信 API...${none}"
     /usr/bin/ddns force
     echo ""
-    read -p "按回车返回菜单..."
+    echo -ne "按回车返回菜单..."
+    read -r dump
     menu
 }
 
@@ -279,7 +295,8 @@ menu() {
     echo -e "  ${yes}3.${none}  查看当前系统运行库的参数"
     echo -e "  ${yes}0.${none}  完全卸载防呆器并退出"
     echo -e "  ${yes}99.${none} 最小化至后台并退出菜单\n"
-    read -p "请分配操作指令编号 > " choice
+    echo -ne "请分配操作指令编号 > "
+    read choice
     case $choice in
         1) configure ;;
         2) force_run ;;
@@ -290,8 +307,7 @@ menu() {
     esac
 }
 
-# ================= 软启判断器：绝对安全无死角的查体 ================= #
-# 抛弃脆弱查询：只要文件实体且不为空，直接解析；只要能读出 Email 值，一发入魂！
+# ================= 软启判断器：绝对安全查体 ================= #
 if [[ -s "/etc/DDNS/.config" ]]; then
     source "/etc/DDNS/.config" 2>/dev/null
     if [[ -n "$Email" ]]; then
@@ -300,5 +316,4 @@ if [[ -s "/etc/DDNS/.config" ]]; then
     fi
 fi
 
-# 以上阻断都不成立，进入向导
 configure

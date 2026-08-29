@@ -50,26 +50,10 @@ Bot 加入群聊后只需要能够发送消息，不需要管理员权限。
 
 ## 安装
 
-Debian/Ubuntu，本地源码安装：
-
-```bash
-apt-get update
-apt-get install -y curl jq util-linux perl-base ca-certificates
-bash ./install.sh
-```
-
-上传到 GitHub 仓库 `uio-o/cloudflare-ddns` 后，其他机器可直接安装：
 
 ```bash
 RAW_BASE='https://raw.githubusercontent.com/uio-o/cloudflare-ddns/main'
 curl -fsSL "$RAW_BASE/install-online.sh" | sudo RAW_BASE="$RAW_BASE" bash
-```
-
-安装自定义仓库版本后，可通过环境变量指定面板自更新地址：
-
-```bash
-export DDNS_INSTALL_URL='https://raw.githubusercontent.com/uio-o/cloudflare-ddns/main/install-online.sh'
-ddns
 ```
 
 也可以先下载源码再执行：

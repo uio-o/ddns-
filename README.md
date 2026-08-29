@@ -168,16 +168,3 @@ cat /var/log/cf_ddns.log
 systemctl status cf-ddns-bot.service --no-pager
 ```
 
-## 安全建议
-
-Cloudflare API Token 建议仅授予目标 zone 的 `Zone Read`、`DNS Read` 和 `DNS Edit` 权限。
-
-不要把 `/usr/local/ddns/cf_ddns.env` 提交到 GitHub。该文件包含 Cloudflare API Token、Telegram Bot Token 和换 IP API Token。
-
-建议发布前执行：
-
-```bash
-git add install.sh install-online.sh scripts assets README.md .gitignore
-git commit -m 'add group notifications for scheduled DDNS updates'
-git push
-```

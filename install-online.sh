@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+BASE_DIR="/usr/local/ddns"
+BIN_LINK="/usr/local/bin/ddns"
+RAW_BASE="${RAW_BASE:-}"
+
+if [[ -z "$RAW_BASE" ]]; then
+  echo "请通过 RAW_BASE 指定整合版 GitHub raw 目录，例如："
+  echo "RAW_BASE='https://raw.githubusercontent.com/<OWNER>/<REPO>/main'"
+  exit 1
+fi
+
+if [[ "${EUID}" -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo -E bash "$0" "$@"
+  fi
+  echo "请使用 root 用户执行安装。"
+  exit 1
+fi
+
+install_deps() {
+  local missing=()
+  local cmd=""
+
+  for cmd in curl jq flock perl; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y curl jq util-linux perl-base ca-certificates
+  else
+    echo "缺少依赖：${missing[*]}"
+    echo "请先安装：curl jq util-linux perl-base ca-certificates"
+    exit 1
+  fi
+}
+
+download_file() {
+  local url="$1"
+  local output="$2"
+  local sep="?"
+
+  [[ "$url" == *\?* ]] && sep="&"
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "${url}${sep}v=$(date +%s)" -o "$output"
+}
+
+install_remote_script() {
+  local remote_path="$1"
+  local target_path="$2"
+  local tmp_file="$3"
+
+  echo "拉取：${remote_path}"
+  download_file "${RAW_BASE}/${remote_path}" "$tmp_file"
+  bash -n "$tmp_file"
+  install -m 700 "$tmp_file" "$target_path"
+}
+
+install_remote_asset() {
+  local remote_path="$1"
+  local target_path="$2"
+  local tmp_file="$3"
+  local byte_count=""
+
+  echo "拉取：${remote_path}"
+  download_file "${RAW_BASE}/${remote_path}" "$tmp_file"
+  perl -0777 -ne 's/[^0-9A-Fa-f]//g; print pack("H*", $_)' "$tmp_file" > "$target_path"
+  byte_count="$(wc -c < "$target_path" | tr -d ' ')"
+  if [[ "$target_path" == *.jpg || "$target_path" == *.png ]] && [[ "$byte_count" -lt 1000 ]]; then
+    echo "图片资源不完整：${target_path} 当前 ${byte_count} 字节，已停止安装。"
+    exit 1
+  fi
+  # 校验图片结尾标记，避免装进截断的素材（PNG 缺 IEND 会触发 Telegram IMAGE_PROCESS_FAILED）。
+  case "$target_path" in
+    *.png)
+      local png_magic png_trailer
+      png_magic="$(LC_ALL=C od -An -N8 -tx1 "$target_path" | tr -d ' \n')"
+      png_trailer="$(LC_ALL=C tail -c 12 "$target_path" | od -An -tx1 | tr -d ' \n')"
+      if [[ "$png_magic" != "89504e470d0a1a0a" || "$png_trailer" != "0000000049454e44ae426082" ]]; then
+        echo "PNG 图片损坏（签名或 IEND 结尾不符）：${target_path}，已停止安装。"
+        exit 1
+      fi
+      ;;
+    *.jpg|*.jpeg)
+      local jpg_magic jpg_trailer
+      jpg_magic="$(LC_ALL=C od -An -N2 -tx1 "$target_path" | tr -d ' \n')"
+      jpg_trailer="$(LC_ALL=C tail -c 2 "$target_path" | od -An -tx1 | tr -d ' \n')"
+      if [[ "$jpg_magic" != "ffd8" || "$jpg_trailer" != "ffd9" ]]; then
+        echo "JPG 图片损坏（缺少 SOI/EOI 标记）：${target_path}，已停止安装。"
+        exit 1
+      fi
+      ;;
+  esac
+  chmod 600 "$target_path"
+}
+
+main() {
+  install_deps
+
+  local tmp_dir=""
+  tmp_dir="$(mktemp -d)"
+  trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"' EXIT
+
+  install -d -m 700 "$BASE_DIR"
+
+  install_remote_script "scripts/cf_ddns.sh" "$BASE_DIR/cf_ddns.sh" "$tmp_dir/cf_ddns.sh"
+  install_remote_script "scripts/cf_change_ip.sh" "$BASE_DIR/cf_change_ip.sh" "$tmp_dir/cf_change_ip.sh"
+  install_remote_script "scripts/cf_ddns_rotate.sh" "$BASE_DIR/cf_ddns_rotate.sh" "$tmp_dir/cf_ddns_rotate.sh"
+  install_remote_script "scripts/cf_ddns_bot.sh" "$BASE_DIR/cf_ddns_bot.sh" "$tmp_dir/cf_ddns_bot.sh"
+  install_remote_script "scripts/cf_ddns_manage.sh" "$BASE_DIR/cf_ddns_manage.sh" "$tmp_dir/cf_ddns_manage.sh"
+  install_remote_asset "assets/panel_illustration.png.hex" "$BASE_DIR/panel_illustration.png" "$tmp_dir/panel_illustration.png.hex"
+  install_remote_asset "assets/panel_illustration.jpg.hex" "$BASE_DIR/panel_illustration.jpg" "$tmp_dir/panel_illustration.jpg.hex"
+
+  ln -sf "$BASE_DIR/cf_ddns_manage.sh" "$BIN_LINK"
+  chmod 755 "$BIN_LINK"
+  printf 'DDNS_INSTALL_URL=%q\n' "${RAW_BASE}/install-online.sh" > "$BASE_DIR/update.env"
+  chmod 600 "$BASE_DIR/update.env"
+
+  echo
+  echo "安装完成。"
+  echo "现在执行：ddns"
+}
+
+main "$@"
